@@ -3,6 +3,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 const NWS_API_BASE = "https://api.weather.gov";
 const USER_AGENT = "weather-app/1.0";
+import { readFile } from 'node:fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import XLSX from "xlsx";
 
 // Create server instance
 const server = new McpServer({
@@ -214,10 +218,108 @@ server.tool(
   },
 );
 
+
+/*
+*/
+// Define a type for your product rows
+interface Product {
+  Product: string;
+  Price: number;
+  // Add other fields if present in your sheet
+}
+
+async function makeProductPricingRequest(): Promise<Product[]> {
+  const fileBuffer = await readExcelSheet('../data/product-pricing.xlsx');
+  const workbook = XLSX.read(fileBuffer, { type: "buffer" });
+  const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json<Product>(worksheet);
+  return data;
+}
+
+async function makeVendorPricingRequest(): Promise<Product[]> {
+  const fileBuffer = await readExcelSheet('../data/product-pricing.xlsx');
+  const workbook = XLSX.read(fileBuffer, { type: "buffer" });
+  const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json<Product>(worksheet);
+  return data;
+}
+
+async function readExcelSheet(file_path: string): Promise<Buffer> {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);  
+  const dataFilePath = path.resolve(__dirname, file_path);
+  try{
+    const data = await readFile(dataFilePath);
+    return data as Buffer;
+  } catch (err) { 
+    console.error(err);
+    throw err;
+  }
+}
+
+// Register product pricing tools
+server.tool(
+  "get-product-pricing",
+  "Get product pricing for mirrors",
+  {
+    mirror: z.string()
+      .min(1, { message: "Mirror name cannot be empty" })
+      .refine(
+        val => val.split(/(?=[A-Z])/).length === 3,
+        { message: "Mirror must be exactly three words long (camelCase)" }
+      )
+      .refine(
+        val => /^[a-z]+([A-Z][a-z]*){2}$/.test(val),
+        { message: "Mirror must be camelCase and three words long" }
+      ),
+  },
+  async ({ mirror }) => {
+    console.error("Handler started with mirror:", mirror);
+    try {
+      const products = await makeProductPricingRequest();
+      console.error("Products loaded:", products.length);
+      const mirrorSearch = products.find(product => 
+        product.Product.toLowerCase().includes(mirror.toLowerCase())
+      );
+      console.error("Mirror search result:", mirrorSearch);
+      return {
+        content: [
+          {
+            type: "text",
+            text: mirrorSearch ? `Price: $${mirrorSearch.Price}` : "Product not found.",
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("Failed to execute tool:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: "An error occurred while executing the tool.",
+          },
+        ],
+      };
+    }
+  },
+);
+
+
+/*
+  Execute Server
+*/
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Weather MCP Server running on stdio");
+
+  const mirror = "goldFullMirror"
+  const products = await makeProductPricingRequest();
+  console.error("Products loaded:", products.length);
+  const mirrorSearch = products.find(product => 
+    product.Product.toLowerCase().includes(mirror.toLowerCase())
+  );
+  console.error("Mirror search result:", mirrorSearch);
 }
 
 main().catch((error) => {
