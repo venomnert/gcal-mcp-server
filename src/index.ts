@@ -61,10 +61,10 @@ async function makeVenuePricingRequest(): Promise<Venue[]> {
   const data = XLSX.utils.sheet_to_json<Venue>(worksheet);
   return data;
 }
-async function makeAddonPricingRequest(): Promise<AddOns[]> {
+async function makeAddonPricingRequest(sheetName: string): Promise<AddOns[]> {
   const fileBuffer = await readExcelSheet('../data/addon-pricing.xlsx');
   const workbook = XLSX.read(fileBuffer, { type: "buffer" });
-  const worksheet = workbook.Sheets[workbook.SheetNames['Half Mirror']];
+  const worksheet = workbook.Sheets[sheetName];
   const data = XLSX.utils.sheet_to_json<AddOns>(worksheet);
   return data;
 }
@@ -163,12 +163,15 @@ server.tool(
   {
     addOn: z.string()
       .min(1, { message: "Add-on name cannot be empty" }),
+    sheet: z.enum(["Half Mirror", "Full Mirror"], {
+      errorMap: () => ({ message: "Add-on must be one of the allowed options" })
+    }),
   },
-  async ({ addOn }) => {
+  async ({ addOn, sheet }) => {
     console.error("Handler started with add-on:", addOn);
 
     try {
-      const addOns = await makeAddonPricingRequest();
+      const addOns = await makeAddonPricingRequest(sheet);
       console.error("Add-ons:", addOns);
 
       const addOnSearch = addOns.find(a => 
@@ -206,14 +209,14 @@ async function main() {
   await server.connect(transport);
   console.error("Server started");
 
-  const addOn = "1 faux floral arrangement"
-  const addOns = await makeAddonPricingRequest();
-  console.error("Add-ons:", addOns);
+  // const addOn = "full floral arch"
+  // const addOns = await makeAddonPricingRequest("Full Mirror");
+  // console.error("Add-ons:", addOns);
 
-  const addOnSearch = addOns.find(a => 
-    a.AddOn.toLowerCase().includes(addOn.toLowerCase())
-  );
-  console.error("Add-on search result:", addOnSearch);
+  // const addOnSearch = addOns.find(a => 
+  //   a.AddOn.toLowerCase().includes(addOn.toLowerCase())
+  // );
+  // console.error("Add-on search result:", addOnSearch);
 }
 
 main().catch((error) => {
