@@ -1,12 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-const NWS_API_BASE = "https://api.weather.gov";
-const USER_AGENT = "weather-app/1.0";
 import { readFile } from 'node:fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import XLSX from "xlsx";
+import { main as calendarMain, listEventsForDay } from "./calendar.js";
 // Create server instance
 const server = new McpServer({
     name: "weather",
@@ -16,152 +15,6 @@ const server = new McpServer({
         tools: {},
     },
 });
-// Helper function for making NWS API requests
-async function makeNWSRequest(url) {
-    const headers = {
-        "User-Agent": USER_AGENT,
-        Accept: "application/geo+json",
-    };
-    try {
-        const response = await fetch(url, { headers });
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return (await response.json());
-    }
-    catch (error) {
-        console.error("Error making NWS request:", error);
-        return null;
-    }
-}
-// Format alert data
-function formatAlert(feature) {
-    const props = feature.properties;
-    return [
-        `Event: ${props.event || "Unknown"}`,
-        `Area: ${props.areaDesc || "Unknown"}`,
-        `Severity: ${props.severity || "Unknown"}`,
-        `Status: ${props.status || "Unknown"}`,
-        `Headline: ${props.headline || "No headline"}`,
-        "---",
-    ].join("\n");
-}
-// Register weather tools
-server.tool("get-alerts", "Get weather alerts for a state", {
-    state: z.string().length(2).describe("Two-letter state code (e.g. CA, NY)"),
-}, async ({ state }) => {
-    const stateCode = state.toUpperCase();
-    const alertsUrl = `${NWS_API_BASE}/alerts?area=${stateCode}`;
-    const alertsData = await makeNWSRequest(alertsUrl);
-    if (!alertsData) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: "Failed to retrieve alerts data",
-                },
-            ],
-        };
-    }
-    const features = alertsData.features || [];
-    if (features.length === 0) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: `No active alerts for ${stateCode}`,
-                },
-            ],
-        };
-    }
-    const formattedAlerts = features.map(formatAlert);
-    const alertsText = `Active alerts for ${stateCode}:\n\n${formattedAlerts.join("\n")}`;
-    return {
-        content: [
-            {
-                type: "text",
-                text: alertsText,
-            },
-        ],
-    };
-});
-server.tool("get-forecast", "Get weather forecast for a location", {
-    latitude: z.number().min(-90).max(90).describe("Latitude of the location"),
-    longitude: z.number().min(-180).max(180).describe("Longitude of the location"),
-}, async ({ latitude, longitude }) => {
-    // Get grid point data
-    const pointsUrl = `${NWS_API_BASE}/points/${latitude.toFixed(4)},${longitude.toFixed(4)}`;
-    const pointsData = await makeNWSRequest(pointsUrl);
-    if (!pointsData) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: `Failed to retrieve grid point data for coordinates: ${latitude}, ${longitude}. This location may not be supported by the NWS API (only US locations are supported).`,
-                },
-            ],
-        };
-    }
-    const forecastUrl = pointsData.properties?.forecast;
-    if (!forecastUrl) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: "Failed to get forecast URL from grid point data",
-                },
-            ],
-        };
-    }
-    // Get forecast data
-    const forecastData = await makeNWSRequest(forecastUrl);
-    if (!forecastData) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: "Failed to retrieve forecast data",
-                },
-            ],
-        };
-    }
-    const periods = forecastData.properties?.periods || [];
-    if (periods.length === 0) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: "No forecast periods available",
-                },
-            ],
-        };
-    }
-    // Format forecast periods
-    const formattedForecast = periods.map((period) => [
-        `${period.name || "Unknown"}:`,
-        `Temperature: ${period.temperature || "Unknown"}°${period.temperatureUnit || "F"}`,
-        `Wind: ${period.windSpeed || "Unknown"} ${period.windDirection || ""}`,
-        `${period.shortForecast || "No forecast available"}`,
-        "---",
-    ].join("\n"));
-    const forecastText = `Forecast for ${latitude}, ${longitude}:\n\n${formattedForecast.join("\n")}`;
-    return {
-        content: [
-            {
-                type: "text",
-                text: forecastText,
-            },
-        ],
-    };
-});
-// Helper function for making NWS API requests
-async function makeProductPricingRequest() {
-    const fileBuffer = await readExcelSheet('../data/product-pricing.xlsx');
-    const workbook = XLSX.read(fileBuffer, { type: "buffer" });
-    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-    const data = XLSX.utils.sheet_to_json(worksheet);
-    return data;
-}
 async function readExcelSheet(file_path) {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
@@ -174,6 +27,27 @@ async function readExcelSheet(file_path) {
         console.error(err);
         throw err;
     }
+}
+async function makeProductPricingRequest() {
+    const fileBuffer = await readExcelSheet('../data/product-pricing.xlsx');
+    const workbook = XLSX.read(fileBuffer, { type: "buffer" });
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+    return data;
+}
+async function makeVenuePricingRequest() {
+    const fileBuffer = await readExcelSheet('../data/venue-pricing.xlsx');
+    const workbook = XLSX.read(fileBuffer, { type: "buffer" });
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+    return data;
+}
+async function makeAddonPricingRequest(sheetName) {
+    const fileBuffer = await readExcelSheet('../data/addon-pricing.xlsx');
+    const workbook = XLSX.read(fileBuffer, { type: "buffer" });
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+    return data;
 }
 // Register product pricing tools
 server.tool("get-product-pricing", "Get product pricing for mirrors", {
@@ -209,18 +83,108 @@ server.tool("get-product-pricing", "Get product pricing for mirrors", {
         };
     }
 });
+server.tool("get-venue-pricing", "Get venue pricing for mirrors", {
+    venue: z.string()
+        .min(1, { message: "Venue name cannot be empty" }),
+}, async ({ venue }) => {
+    console.error("Handler started with venue:", venue);
+    try {
+        const venues = await makeVenuePricingRequest();
+        console.error("Venues:", venues);
+        const venueSearch = venues.find(v => v.Venue.toLowerCase().includes(venue.toLowerCase()));
+        console.error("Venue search result:", venueSearch);
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: venueSearch ? `Price: $${venueSearch.Price}` : "Venue not found.",
+                },
+            ],
+        };
+    }
+    catch (error) {
+        console.error("Failed to execute tool:", error);
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: "An error occurred while executing the tool.",
+                },
+            ],
+        };
+    }
+});
+server.tool("get-addon-pricing", "Get add-on pricing for mirrors", {
+    addOn: z.string()
+        .min(1, { message: "Add-on name cannot be empty" }),
+    sheet: z.enum(["Half Mirror", "Full Mirror"], {
+        errorMap: () => ({ message: "Add-on must be one of the allowed options" })
+    }),
+}, async ({ addOn, sheet }) => {
+    console.error("Handler started with add-on:", addOn);
+    try {
+        const addOns = await makeAddonPricingRequest(sheet);
+        console.error("Add-ons:", addOns);
+        const addOnSearch = addOns.find(a => a.AddOn.toLowerCase().includes(addOn.toLowerCase()));
+        console.error("Add-on search result:", addOnSearch);
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: addOnSearch ? `Price: $${addOnSearch.Price}` : "Add-on not found.",
+                },
+            ],
+        };
+    }
+    catch (error) {
+        console.error("Failed to execute tool:", error);
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: "An error occurred while executing the tool.",
+                },
+            ],
+        };
+    }
+});
+server.tool("get-calendar-events", "Get calendar events", {
+    eventDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, { message: "Date must be in yyyy-mm-dd format" }),
+}, async ({ eventDate }) => {
+    try {
+        const authClient = await calendarMain();
+        const specificDay = new Date(eventDate);
+        console.log(`\nFetching calendar events for ${specificDay.toDateString()}...`);
+        const events = await listEventsForDay(authClient, specificDay);
+        console.error(events);
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: events ? `Events: ${events}` : "No events found.",
+                },
+            ],
+        };
+    }
+    catch (error) {
+        console.error("Failed to execute tool:", error);
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: "An error occurred while executing the tool.",
+                },
+            ],
+        };
+    }
+});
 /*
   Execute Server
 */
 async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("Weather MCP Server running on stdio");
-    const mirror = "goldFullMirror";
-    const products = await makeProductPricingRequest();
-    console.error("Products loaded:", products.length);
-    const mirrorSearch = products.find(product => product.Product.toLowerCase().includes(mirror.toLowerCase()));
-    console.error("Mirror search result:", mirrorSearch);
+    console.error("Server started");
 }
 main().catch((error) => {
     console.error("Fatal error in main():", error);

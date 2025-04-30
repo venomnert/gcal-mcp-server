@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import XLSX from "xlsx";
+import { main as calendarMain, listEventsForDay } from "./calendar.js";
 
 // Create server instance
 const server = new McpServer({
@@ -17,7 +18,7 @@ const server = new McpServer({
 });
 
 
-/*
+/*  
 */
 // Define a type for your product rows
 interface Product {
@@ -201,6 +202,45 @@ server.tool(
   },
 );
 
+server.tool(
+  "get-calendar-events",
+  "Get calendar events",
+  {
+    eventDate: z.string().regex(
+      /^\d{4}-\d{2}-\d{2}$/,
+      { message: "Date must be in yyyy-mm-dd format" }
+    ),
+  },
+  async ({ eventDate }) => {
+    try {
+      const authClient = await calendarMain()
+      const specificDay = new Date(eventDate);
+      console.log(`\nFetching calendar events for ${specificDay.toDateString()}...`);
+      const events = await listEventsForDay(authClient, specificDay);
+      console.error(events)
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: events ? `Events: ${events}` : "No events found.",
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("Failed to execute tool:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: "An error occurred while executing the tool.",
+          },
+        ],
+      };
+    }
+  },
+);
+
 /*
   Execute Server
 */
@@ -208,15 +248,6 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Server started");
-
-  // const addOn = "full floral arch"
-  // const addOns = await makeAddonPricingRequest("Full Mirror");
-  // console.error("Add-ons:", addOns);
-
-  // const addOnSearch = addOns.find(a => 
-  //   a.AddOn.toLowerCase().includes(addOn.toLowerCase())
-  // );
-  // console.error("Add-on search result:", addOnSearch);
 }
 
 main().catch((error) => {
